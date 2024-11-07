@@ -11,6 +11,7 @@
     "@commitlint/cli": "^19.5.0",
     "@commitlint/config-conventional": "^19.5.0",
     "@types/bun": "latest",
+    "@types/lodash.get": "^4.4.9",
     "husky": "^9.1.6",
     "lint-staged": "^15.2.10",
     "prettier": "^3.3.3"
@@ -28,6 +29,8 @@
     "node": "22.11.0"
   },
   "dependencies": {
-    "@ilc-technology/env-utils": "^2.37.0"
+    "@ilc-technology/env-utils": "^2.37.0",
+    "flat": "^6.0.1",
+    "lodash.get": "^4.4.2"
   }
 }
