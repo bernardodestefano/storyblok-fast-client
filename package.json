@@ -1,0 +1,33 @@
+{
+  "name": "storyblok-fast-client",
+  "version": "0.0.1",
+  "author": "Bernardo de Stefano <bernardo.destefano@gmail.com>",
+  "module": "src/index.ts",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "license": "MIT",
+  "devDependencies": {
+    "@commitlint/cli": "^19.5.0",
+    "@commitlint/config-conventional": "^19.5.0",
+    "@types/bun": "latest",
+    "husky": "^9.1.6",
+    "lint-staged": "^15.2.10",
+    "prettier": "^3.3.3"
+  },
+  "peerDependencies": {
+    "typescript": "^5.0.0"
+  },
+  "lint-staged": {
+    "**/*.{js,json,ts}": [
+      "eslint --max-warnings=0",
+      "prettier --write"
+    ]
+  },
+  "volta": {
+    "node": "22.11.0"
+  },
+  "dependencies": {
+    "@ilc-technology/env-utils": "^2.37.0"
+  }
+}

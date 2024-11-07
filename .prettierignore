@@ -1,0 +1,6 @@
+coverage
+public
+dist
+package-lock.json
+**/datalayer
+
