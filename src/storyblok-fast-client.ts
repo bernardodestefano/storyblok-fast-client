@@ -1,14 +1,13 @@
 import { marketCodes, getFallbackMarket } from '@ilc-technology/env-utils';
-import { readdir, access, mkdir, writeFile } from 'node:fs/promises';
+import { writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-
-const checkDir = async (path: string) => {
-  try {
-    await access(resolve(path));
-  } catch (error) {
-    await mkdir(resolve(path), { recursive: true });
-  }
-};
+import { flatten } from 'flat';
+import get from 'lodash.get';
+import {
+  checkDir,
+  RELATIONS_TO_RESOLVE,
+  getFilteredMarketsForBuild,
+} from './utils';
 
 export type StoryblokParams = {
   version: string;
@@ -19,19 +18,9 @@ export type StoryblokParams = {
   page?: number;
 };
 
-export async function getCacheVersion(token: string) {
-  const response = await fetch(
-    `https://api.storyblok.com/v2/cdn/spaces/me?token=${token}`
-  );
-  const data = await response.json();
-
-  return data?.space ? data.space.version : Date.now();
-}
-
 export interface SbFastClientConfig {
   accessToken: string;
   version: string;
-  marketCodes?: string[];
 }
 
 export class SbFastClient {
@@ -43,15 +32,8 @@ export class SbFastClient {
   constructor(config: SbFastClientConfig) {
     this.datalayerPath = 'datalayer/stories/';
     this.version = config?.version || Date.now().toString();
-    this.marketCodes = this.getFilteredMarketsForBuild(marketCodes);
+    this.marketCodes = getFilteredMarketsForBuild(marketCodes);
     this.API_URL = `https://api.storyblok.com/v2/cdn/stories?token=${config.accessToken}`;
-  }
-
-  private getFilteredMarketsForBuild(marketCodes: string[]) {
-    if (process.env.MARKET)
-      return marketCodes.filter((mkt) => mkt === process.env.MARKET);
-
-    return marketCodes.filter((market) => market !== 'cn');
   }
 
   private async processPromisesInBulks(
@@ -120,12 +102,104 @@ export class SbFastClient {
     }, {});
   }
 
+  private findComponents(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    components: any,
+    componentNamesToResolve: string[]
+  ) {
+    const flatContent: { [key: string]: string } = flatten(components);
+    const flatKeys = Object.keys(flatContent).filter((key) => {
+      return componentNamesToResolve.includes(flatContent[key]);
+    });
+
+    return flatKeys.map((flatKey) => {
+      const componentName = flatContent[flatKey];
+      const path = flatKey.split('.');
+      path.pop();
+      const parentFlatKey = path.join('.');
+      return { [parentFlatKey]: componentName };
+    });
+  }
+
+  private resolveNestedComponents(
+    pathToComponents = 'content.body',
+    relationsToResolve: any,
+    storyData: any,
+    dictionary: any,
+    maxLevelOfNesting = 10
+  ): any {
+    const components = get(storyData, pathToComponents);
+
+    if (!components) {
+      return storyData;
+    }
+
+    const relationsMap = relationsToResolve.reduce(
+      (acc: any, item: any) => {
+        const [key, value] = item.split('.');
+        acc[key] = value;
+        return acc;
+      },
+      {} as { [key: string]: string }
+    );
+
+    const componentNamesToResolve = Object.keys(relationsMap);
+
+    let foundComponents;
+    let counter = 0;
+    while (
+      (foundComponents = this.findComponents(
+        components,
+        componentNamesToResolve
+      )) &&
+      counter <= maxLevelOfNesting
+    ) {
+      counter++;
+      let changed = false;
+
+      for (const foundComponent of foundComponents) {
+        const pointer = Object.keys(foundComponent)[0];
+        const name = foundComponent[pointer];
+
+        const nextComponentToResolve = get(components, pointer);
+        const fieldsToResolve = relationsMap[name];
+
+        for (const key of Object.keys(nextComponentToResolve)) {
+          if (fieldsToResolve.includes(key)) {
+            if (Array.isArray(nextComponentToResolve[key])) {
+              const uids: string[] = nextComponentToResolve[key];
+
+              if (!(uids.length && typeof uids[0] === 'string')) {
+                continue;
+              }
+
+              const fetchedTemplates = uids.map((uid) => dictionary?.[uid]);
+              nextComponentToResolve[key] = fetchedTemplates;
+              changed = true;
+            } else if (typeof nextComponentToResolve[key] === 'string') {
+              const uid: string = nextComponentToResolve[key];
+              const fetchedTemplate = dictionary?.[uid] || uid;
+              nextComponentToResolve[key] = fetchedTemplate;
+              changed = true;
+            }
+          }
+        }
+      }
+
+      if (!changed) {
+        break;
+      }
+    }
+
+    return storyData;
+  }
+
   private resolveRelationsForStory(
     story: Record<string, any>,
     dictionary: Record<string, any>
   ): Record<string, any> {
     for (const [k, v] of Object.entries(story)) {
-      if (v !== null) {
+      if (v !== null && k !== 'uuid' && k !== '_uid') {
         if (Array.isArray(v)) {
           story[k] = v.map((item) => {
             if (item !== null && typeof item === 'object') {
@@ -150,94 +224,17 @@ export class SbFastClient {
     stories: Record<string, any>[],
     dictionary: Record<string, any>
   ): Record<string, any>[] {
+    // return stories.map((story) =>
+    //   this.resolveRelationsForStory(story, dictionary)
+    // );
     return stories.map((story) =>
-      this.resolveRelationsForStory(story, dictionary)
+      this.resolveNestedComponents(
+        'content.body',
+        RELATIONS_TO_RESOLVE,
+        story,
+        dictionary
+      )
     );
-  }
-
-  private resolveRelationsPS(
-    stories: Record<string, any>[],
-    maxDepth = 20
-  ): Record<string, any>[] {
-    // Create a mapping from UUID to story content
-    const referencedStoriesDictionary: Record<string, any> =
-      this.createReferencedStoriesDictionary(stories);
-    stories.forEach((story) => {
-      if (story && story.uuid && story.content) {
-        referencedStoriesDictionary[story.uuid] = story;
-      } else {
-        console.warn('Skipping invalid story:', story);
-      }
-    });
-
-    // console.log('storyMap:', JSON.stringify(storyMap, null, 2));
-
-    // Recursive function to replace UUIDs with actual stories
-    function replaceUUIDs(content: any, currentDepth = 0): any {
-      if (currentDepth >= maxDepth) {
-        console.warn('Max depth reached');
-        return content;
-      }
-
-      if (Array.isArray(content)) {
-        return content.map((item) => replaceUUIDs(item, currentDepth));
-      } else if (content && typeof content === 'object') {
-        // If the object is a story, only resolve its 'content' property
-        if (content.uuid && content.content) {
-          return {
-            ...content,
-            content: replaceUUIDs(content.content, currentDepth),
-          };
-        }
-
-        const newContent: Record<string, any> = {};
-        for (const key in content) {
-          const value = content[key];
-          // Skip fields named '_uid' or 'uuid' but copy them over
-          if (key === '_uid' || key === 'uuid') {
-            newContent[key] = value;
-            continue;
-          }
-          // Check if the value is a UUID that matches a story
-          if (typeof value === 'string' && referencedStoriesDictionary[value]) {
-            // Replace with the entire story object
-            const story = referencedStoriesDictionary[value];
-            // Recursively resolve the 'content' property of the story
-            newContent[key] = {
-              ...story,
-              content: replaceUUIDs(story.content, currentDepth + 1),
-            };
-          } else {
-            newContent[key] = replaceUUIDs(value, currentDepth);
-          }
-        }
-        return newContent;
-      } else if (typeof content === 'string') {
-        // Replace string UUIDs with the corresponding story
-        if (referencedStoriesDictionary[content]) {
-          const story = referencedStoriesDictionary[content];
-          return {
-            ...story,
-            content: replaceUUIDs(story.content, currentDepth + 1),
-          };
-        }
-      }
-      return content;
-    }
-
-    // Iterate over each story and resolve relations
-    stories.forEach((story) => {
-      if (story && story.content) {
-        if (story.name === 'pop-up-test') {
-          console.log('pop up test:', story.content);
-        }
-        story.content = replaceUUIDs(story.content);
-      } else {
-        console.warn('Skipping story with invalid content:', story);
-      }
-    });
-
-    return stories;
   }
 
   private async fetchAdditionalStories(
@@ -321,28 +318,6 @@ export class SbFastClient {
     );
   }
 
-  private stringify(obj: any) {
-    let cache: any = [];
-    let str = JSON.stringify(
-      obj,
-      function (key, value) {
-        if (typeof value === 'object' && value !== null) {
-          if (cache.indexOf(value) !== -1) {
-            // Circular reference found, discard key
-            console.log(`Circular reference found, discard ${key}`);
-            return;
-          }
-          // Store value in our collection
-          cache.push(value);
-        }
-        return value;
-      },
-      2
-    );
-    cache = null; // reset the cache
-    return str;
-  }
-
   async getAllStories() {
     const start = Date.now();
     await checkDir(this.datalayerPath);
@@ -358,14 +333,13 @@ export class SbFastClient {
         const referencedStoriesDictionary: Record<string, any> =
           this.createReferencedStoriesDictionary(stories);
 
-        // const storiesWithResolvedRelations = this.resolveRelationsPS(stories);
         const storiesWithResolvedRelations = this.resolveRelations(
           stories,
           referencedStoriesDictionary
         );
         await writeFile(
           resolve(`${this.datalayerPath}/${mkt}/index.json`),
-          this.stringify({ stories: storiesWithResolvedRelations })
+          JSON.stringify({ stories: storiesWithResolvedRelations }, null, 2)
         );
       }
 
