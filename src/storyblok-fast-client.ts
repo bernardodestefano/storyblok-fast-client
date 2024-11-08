@@ -1,43 +1,13 @@
 import { marketCodes, getFallbackMarket } from '@ilc-technology/env-utils';
-import { readdir, access, mkdir, writeFile } from 'node:fs/promises';
+import { writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { flatten } from 'flat';
 import get from 'lodash.get';
-
-const checkDir = async (path: string) => {
-  try {
-    await access(resolve(path));
-  } catch (error) {
-    await mkdir(resolve(path), { recursive: true });
-  }
-};
-
-const RELATIONS_TO_RESOLVE = [
-  'Target.modelLabel',
-  'Target.modalTemplate',
-  'List.label',
-  'Template.story',
-  'destination.tagLabel',
-  'DestinationList.label',
-  'DestinationList.fromLabel',
-  'DestinationList.funnelingLabels',
-  'DestinationCarousel.staticCards',
-  'DestinationCarousel.fromLabel',
-  'DestinationCarousel.seeAllLabel',
-  'DestinationCarousel.funnelingLabels',
-  'List.label',
-  'ProductCarousel.products',
-  'Stories.openCloseLabels',
-  'Stories.previousNextLabels',
-  'Stories.muteUnmuteLabels',
-  'Template.story',
-  'Testimonial.labels',
-  'Target.funnelingLabels',
-  'gallery.moreLabel',
-  'InfomeetingCard.showLabels',
-  'InfomeetingCard.checkboxLabel',
-  'PopUp.dialogTemplate',
-];
+import {
+  checkDir,
+  RELATIONS_TO_RESOLVE,
+  getFilteredMarketsForBuild,
+} from './utils';
 
 export type StoryblokParams = {
   version: string;
@@ -48,19 +18,9 @@ export type StoryblokParams = {
   page?: number;
 };
 
-export async function getCacheVersion(token: string) {
-  const response = await fetch(
-    `https://api.storyblok.com/v2/cdn/spaces/me?token=${token}`
-  );
-  const data = await response.json();
-
-  return data?.space ? data.space.version : Date.now();
-}
-
 export interface SbFastClientConfig {
   accessToken: string;
   version: string;
-  marketCodes?: string[];
 }
 
 export class SbFastClient {
@@ -72,15 +32,8 @@ export class SbFastClient {
   constructor(config: SbFastClientConfig) {
     this.datalayerPath = 'datalayer/stories/';
     this.version = config?.version || Date.now().toString();
-    this.marketCodes = this.getFilteredMarketsForBuild(marketCodes);
+    this.marketCodes = getFilteredMarketsForBuild(marketCodes);
     this.API_URL = `https://api.storyblok.com/v2/cdn/stories?token=${config.accessToken}`;
-  }
-
-  private getFilteredMarketsForBuild(marketCodes: string[]) {
-    if (process.env.MARKET)
-      return marketCodes.filter((mkt) => mkt === process.env.MARKET);
-
-    return marketCodes.filter((market) => market !== 'cn');
   }
 
   private async processPromisesInBulks(
@@ -249,7 +202,7 @@ export class SbFastClient {
     console.log(story.name);
 
     for (const [k, v] of Object.entries(story)) {
-      if (v !== null) {
+      if (v !== null && k !== 'uuid' && k !== '_uid') {
         if (Array.isArray(v)) {
           console.log('array:', v);
           story[k] = v.map((item) => {
@@ -384,7 +337,6 @@ export class SbFastClient {
         const referencedStoriesDictionary: Record<string, any> =
           this.createReferencedStoriesDictionary(stories);
 
-        // const storiesWithResolvedRelations = this.resolveRelationsPS(stories);
         const storiesWithResolvedRelations = this.resolveRelations(
           stories,
           referencedStoriesDictionary
