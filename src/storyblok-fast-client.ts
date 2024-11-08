@@ -98,6 +98,7 @@ export class SbFastClient {
   ): Record<string, any> {
     return stories.reduce((acc, story) => {
       acc[story.uuid] = story;
+      console.log(story.uuid, story.name);
       return acc;
     }, {});
   }
@@ -198,9 +199,12 @@ export class SbFastClient {
     story: Record<string, any>,
     dictionary: Record<string, any>
   ): Record<string, any> {
+    console.log(story.name);
+
     for (const [k, v] of Object.entries(story)) {
       if (v !== null && k !== 'uuid' && k !== '_uid') {
         if (Array.isArray(v)) {
+          console.log('array:', v);
           story[k] = v.map((item) => {
             if (item !== null && typeof item === 'object') {
               return this.resolveRelationsForStory(item, dictionary);
@@ -212,6 +216,7 @@ export class SbFastClient {
         } else if (typeof v === 'object') {
           story[k] = this.resolveRelationsForStory(v, dictionary);
         } else if (dictionary[v]) {
+          console.log('else:', v);
           story[k] = dictionary[v];
           this.resolveRelationsForStory(story[k], dictionary);
         }
@@ -224,9 +229,8 @@ export class SbFastClient {
     stories: Record<string, any>[],
     dictionary: Record<string, any>
   ): Record<string, any>[] {
-    // return stories.map((story) =>
-    //   this.resolveRelationsForStory(story, dictionary)
-    // );
+    // return stories;
+
     return stories.map((story) =>
       this.resolveNestedComponents(
         'content.body',
@@ -337,6 +341,7 @@ export class SbFastClient {
           stories,
           referencedStoriesDictionary
         );
+
         await writeFile(
           resolve(`${this.datalayerPath}/${mkt}/index.json`),
           JSON.stringify({ stories: storiesWithResolvedRelations }, null, 2)
